@@ -26,6 +26,10 @@ require redeployment when the selected JVM cannot HotSwap them.
 JVM options entered in IntelliJ apply to the server JVM; the domain's startup
 settings are read without modifying `domain.xml`. Stop another running instance
 of the domain before launching it from the IDE.
+Follow application logs in **Payara server.log**, enabled by default in **Logs**.
+To avoid repeating them in **Server**, remove `java.util.logging.ConsoleHandler`
+from `handlers` in the domain's `config/logging.properties`. Keep file logging
+enabled; the **Server** console continues to show process diagnostics.
 Domains with a custom master password must have that password saved by Payara;
 the default domain master password also works.
 
