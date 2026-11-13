@@ -25,6 +25,7 @@ import com.intellij.javaee.oss.server.JavaeeRunSettingsEditor;
 import com.intellij.javaee.oss.server.JavaeeServerInstance;
 import com.intellij.javaee.oss.server.JavaeeServerModel;
 import com.intellij.openapi.options.SettingsEditor;
+import com.intellij.openapi.projectRoots.JavaSdkType;
 import com.intellij.util.ui.FormBuilder;
 import fish.payara.server.PayaraServerConfigurationType;
 import fish.payara.server.local.ServerLocalConfiguration;
@@ -36,6 +37,8 @@ import javax.swing.JPasswordField;
 import javax.swing.JTextField;
 import java.io.IOException;
 import java.nio.file.InvalidPathException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
 import org.jdom.JDOMException;
 
@@ -54,6 +57,13 @@ public final class PayaraServerModel extends JavaeeServerModel {
     public void checkConfiguration() throws RuntimeConfigurationException {
         super.checkConfiguration();
         checkHasJdk();
+        var sdk = getJre();
+        if (!(sdk.getSdkType() instanceof JavaSdkType) || sdk.getHomePath() == null || !Files.isDirectory(Path.of(sdk.getHomePath()))) {
+            throw new RuntimeConfigurationError("Select an installed Java SDK for Payara Server.");
+        }
+        if (!getVmArguments().isBlank()) {
+            throw new RuntimeConfigurationError("asadmin uses the domain's JVM options. Move VM options to domain.xml and clear the VM options field in this configuration.");
+        }
         var configuration = localConfiguration();
         configuration.checkDomain();
         var names = new HashSet<String>();
@@ -75,11 +85,12 @@ public final class PayaraServerModel extends JavaeeServerModel {
     @Override protected String getDefaultPassword() { return ""; }
     @Override protected boolean isEmptyPasswordAllowed() { return true; }
     @Override public boolean undeployBeforeDeploy() { return false; }
-    @Override public boolean isDetectableLocalPort() { return false; }
-    @Override public boolean isDetectableServerPort() { return false; }
     @Override protected String getLogFileId() { return "Payara server.log"; }
     @Override protected String getLogFilePath(String id) { return localConfiguration().getDomainDirectory().resolve("logs/server.log").toString(); }
-    @Override protected JavaeeAdmin createServerAdmin(JavaeeServerInstance instance) { return new PayaraAdmin(this, instance); }
+    @Override protected JavaeeAdmin createServerAdmin(JavaeeServerInstance instance) throws RuntimeConfigurationException {
+        checkConfiguration();
+        return new PayaraAdmin(this, instance);
+    }
 
     @Override protected int getServerPort() { return port("admin-listener", 4848); }
     @Override public int getLocalPort() { return port("http-listener-1", 8080); }

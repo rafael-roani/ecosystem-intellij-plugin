@@ -17,19 +17,22 @@ same server deployment when the archive version changes. Use **Build Artifacts**
 in **Before launch** for project artifacts; external archives must already exist.
 The EAR/WAR descriptors continue to supply the application's context roots.
 
-**Run**, **Debug** and **Stop** use IntelliJ's application server lifecycle.
+**Run** and **Debug** start the domain through `asadmin start-domain`; **Stop**
+runs `asadmin stop-domain`. IntelliJ continues monitoring the domain after the
+startup command exits. For **Debug**, configure `transport=dt_socket,server=n`
+and a local debug address in the domain's `java-config` debug options; IntelliJ
+listens on that port while the server JVM connects to it.
 The server and its deployments appear in **Services**, with deploy, redeploy,
 undeploy and status refresh actions. **Update Application** offers the native
 update policies: redeploy for archives, resource updates for project exploded
 artifacts and class HotSwap while debugging. Structural Java changes still
 require redeployment when the selected JVM cannot HotSwap them.
-JVM options entered in IntelliJ apply to the server JVM; the domain's startup
-settings are read without modifying `domain.xml`. Stop another running instance
-of the domain before launching it from the IDE.
+Configure server JVM options in `domain.xml`; keep the run configuration's
+**VM options** field empty when using `asadmin`. Startup does not modify the
+domain settings. Stop another running instance before launching the domain.
+The **Server** console shows startup, debugger connection and deployment messages.
 Follow application logs in **Payara server.log**, enabled by default in **Logs**.
-To avoid repeating them in **Server**, remove `java.util.logging.ConsoleHandler`
-from `handlers` in the domain's `config/logging.properties`. Keep file logging
-enabled; the **Server** console continues to show process diagnostics.
+The domain's `logging.properties` does not need to be changed for this separation.
 Domains with a custom master password must have that password saved by Payara;
 the default domain master password also works.
 

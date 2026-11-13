@@ -211,13 +211,20 @@ public final class ServerLocalConfiguration extends RunConfigurationBase<RunConf
         throw new RuntimeConfigurationError("Server configuration not found in domain.xml: " + configName);
     }
 
-    public String getDebugPort() throws IOException, JDOMException, RuntimeConfigurationError {
+    private String getDebugOptions() throws IOException, JDOMException, RuntimeConfigurationError {
         Element java = getServerConfig(JDOMUtil.load(getDomainDirectory().resolve("config/domain.xml"))).getChild("java-config");
-        if (java != null) {
-            String options = java.getAttributeValue("debug-options", "");
-            var matcher = Pattern.compile("(?:^|,)address=(?:[^,]*:)?(\\d+)(?:,|$)").matcher(options.replace("-agentlib:jdwp=", ""));
-            if (options.contains("transport=dt_socket") && matcher.find()) return validPort(matcher.group(1));
-        }
+        return java == null ? "" : java.getAttributeValue("debug-options", "")
+                .replace("-agentlib:jdwp=", "").replace("-Xrunjdwp:", "");
+    }
+
+    public boolean isDebugServerListening() throws IOException, JDOMException, RuntimeConfigurationError {
+        return Pattern.compile("(?:^|,)server=y(?:,|$)").matcher(getDebugOptions()).find();
+    }
+
+    public String getDebugPort() throws IOException, JDOMException, RuntimeConfigurationError {
+        String options = getDebugOptions();
+        var matcher = Pattern.compile("(?:^|,)address=(?:[^,]*:)?(\\d+)(?:,|$)").matcher(options);
+        if (options.contains("transport=dt_socket") && matcher.find()) return validPort(matcher.group(1));
         throw new RuntimeConfigurationError("Configure a socket debug port in the domain's java-config debug-options.");
     }
 

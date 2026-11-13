@@ -45,6 +45,7 @@ public final class PayaraServerIntegration extends JavaeeIntegration {
     @Override public String getNameFromTemplate(String path) { return "Payara Server"; }
     @Override public String getVersionFromTemplate(String path) { return ""; }
     @Override public boolean isAsyncWrapped() { return true; }
+    @Override public boolean isStartupScriptTerminating() { return true; }
     @Override public JavaeeDeploymentProvider getDeploymentProvider(boolean local) {
         return new JavaeeDeploymentProvider() {
             @Override public boolean isDeployOrderMatter() { return true; }

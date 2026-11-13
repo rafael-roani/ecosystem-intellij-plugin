@@ -16,58 +16,105 @@
  */
 package fish.payara.server.ultimate;
 
+import com.intellij.execution.configurations.DebuggingRunnerData;
+import com.intellij.execution.configurations.RuntimeConfigurationError;
+import com.intellij.execution.configurations.RuntimeConfigurationException;
 import com.intellij.execution.ExecutionException;
-import com.intellij.execution.configurations.JavaParameters;
-import com.intellij.execution.process.CapturingProcessHandler;
-import com.intellij.javaee.appServers.run.configuration.CommonModel;
-import com.intellij.javaee.appServers.run.configuration.JavaCommandLineStartupPolicy;
+import com.intellij.execution.process.OSProcessHandler;
+import com.intellij.execution.util.EnvironmentVariable;
+import com.intellij.debugger.impl.GenericDebuggerRunnerSettings;
+import com.intellij.debugger.settings.DebuggerSettings;
+import com.intellij.javaee.appServers.run.localRun.ExecutableObject;
+import com.intellij.javaee.appServers.run.localRun.ColoredCommandLineExecutableObject;
+import com.intellij.javaee.oss.server.JavaeeParameters;
+import com.intellij.javaee.oss.server.JavaeeStartupPolicy;
+import com.intellij.openapi.projectRoots.JavaSdkType;
 
-import java.io.File;
-import java.util.ArrayList;
+import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import org.jdom.JDOMException;
 
-final class PayaraStartupPolicy implements JavaCommandLineStartupPolicy {
-    private static final String MAIN_CLASS = "com.sun.enterprise.glassfish.bootstrap.ASMain";
-
+final class PayaraStartupPolicy extends JavaeeStartupPolicy<PayaraServerModel> {
     @Override
-    public JavaParameters createCommandLine(CommonModel common) throws ExecutionException {
-        var model = (PayaraServerModel) common.getServerModel();
-        try {
-            model.checkConfiguration();
-        } catch (com.intellij.execution.configurations.RuntimeConfigurationException e) {
-            throw new ExecutionException(e.getMessage(), e);
-        }
-        var configuration = model.localConfiguration();
-        var parameters = configuration.createAsadminParameters(model.getJre());
-        parameters.getProgramParametersList().addAll("--terse=true", "start-domain", "--dry-run=true", "--verbose=true",
-                "--debug=false", "--domaindir", configuration.getGlassfishHome().resolve("domains").toString(), model.DOMAIN);
-        var output = new CapturingProcessHandler(parameters.toCommandLine()).runProcess(30_000);
-        if (output.isTimeout() || output.getExitCode() != 0) {
-            throw new ExecutionException("Cannot prepare Payara startup: " + output.getStdout() + output.getStderr());
-        }
-        return serverParameters(parameters, output.getStdout());
+    protected void getStartupParameters(JavaeeParameters parameters, PayaraServerModel model, boolean debug) {
+        asadmin(parameters, model);
+        parameters.add("start-domain", "--debug=" + debug, "--domaindir",
+                model.localConfiguration().getGlassfishHome().resolve("domains").toString(), model.DOMAIN);
     }
 
-    static JavaParameters serverParameters(JavaParameters cli, String output) throws ExecutionException {
-        List<String> arguments = new ArrayList<>(output.lines().filter(line -> !line.isBlank()).toList());
-        int main = arguments.indexOf(MAIN_CLASS);
-        if (arguments.size() < 4 || !"-cp".equals(arguments.get(1)) || main < 3) {
-            throw new ExecutionException("Unrecognized Payara start-domain --dry-run output.");
+    @Override
+    protected void getShutdownParameters(JavaeeParameters parameters, PayaraServerModel model, boolean debug) {
+        asadmin(parameters, model);
+        parameters.add("stop-domain", "--domaindir",
+                model.localConfiguration().getGlassfishHome().resolve("domains").toString(), model.DOMAIN);
+    }
+
+    private static void asadmin(JavaeeParameters parameters, PayaraServerModel model) {
+        var sdk = model.getJre();
+        String java = sdk != null && sdk.getHomePath() != null && sdk.getSdkType() instanceof JavaSdkType javaSdk
+                ? javaSdk.getVMExecutablePath(sdk) : "java";
+        parameters.add(java, "-jar", model.localConfiguration().getGlassfishHome().resolve("lib/client/appserver-cli.jar").toString(),
+                "--interactive=false");
+    }
+
+    @Override
+    protected ExecutableObject getDefaultStartupScript(PayaraServerModel model, boolean debug) {
+        if (model.getCommonModel().getApplicationServer() == null) return null;
+        var parameters = new JavaeeParameters();
+        getStartupParameters(parameters, model, debug);
+        return executable(model, parameters);
+    }
+
+    @Override
+    protected ExecutableObject getDefaultShutdownScript(PayaraServerModel model, boolean debug) {
+        if (model.getCommonModel().getApplicationServer() == null) return null;
+        var parameters = new JavaeeParameters();
+        getShutdownParameters(parameters, model, debug);
+        return executable(model, parameters);
+    }
+
+    private static ExecutableObject executable(PayaraServerModel model, JavaeeParameters parameters) {
+        String directory = model.localConfiguration().getGlassfishHome().resolve("bin").toString();
+        return new ColoredCommandLineExecutableObject(parameters.get(), null) {
+            @Override public OSProcessHandler createProcessHandler(String workingDirectory, Map<String, String> environment) throws ExecutionException {
+                return super.createProcessHandler(workingDirectory == null ? directory : workingDirectory, environment);
+            }
+        };
+    }
+
+    @Override
+    protected List<EnvironmentVariable> getEnvironmentVariables(PayaraServerModel model) {
+        var sdk = model.getJre();
+        if (sdk == null || sdk.getHomePath() == null) return List.of();
+        return List.of(new EnvironmentVariable("JAVA_HOME", sdk.getHomePath(), true),
+                new EnvironmentVariable("AS_JAVA", sdk.getHomePath(), true));
+    }
+
+    @Override
+    protected void initSettings(PayaraServerModel model, DebuggingRunnerData data) {
+        try {
+            data.setDebugPort(model.localConfiguration().getDebugPort());
+            data.setLocal(true);
+            if (data instanceof GenericDebuggerRunnerSettings generic) generic.setTransport(DebuggerSettings.SOCKET_TRANSPORT);
+        } catch (IOException | JDOMException | RuntimeConfigurationError ignored) {
+            // Unconfigured templates are validated before the server starts.
         }
-        var parameters = new JavaParameters();
-        parameters.setJdk(cli.getJdk());
-        parameters.setEnv(cli.getEnv());
-        parameters.setPassParentEnvs(true);
-        parameters.setCharset(cli.getCharset());
-        parameters.setWorkingDirectory(cli.getWorkingDirectory());
-        for (String path : arguments.get(2).split(java.util.regex.Pattern.quote(File.pathSeparator))) parameters.getClassPath().add(path);
-        parameters.getVMParametersList().addAll(arguments.subList(3, main));
-        parameters.setMainClass(MAIN_CLASS);
-        List<String> program = new ArrayList<>(arguments.subList(main + 1, arguments.size()));
-        int stdin = program.indexOf("-read-stdin");
-        // shortcut: use the saved/default domain master password; add an editor for unsaved custom master passwords.
-        if (stdin >= 0 && stdin + 1 < program.size()) program.subList(stdin, stdin + 2).clear();
-        parameters.getProgramParametersList().addAll(program);
-        return parameters;
+    }
+
+    @Override
+    protected void checkSettings(PayaraServerModel model, DebuggingRunnerData data) throws RuntimeConfigurationException {
+        model.checkConfiguration();
+        try {
+            var configuration = model.localConfiguration();
+            if (configuration.isDebugServerListening()) {
+                throw new RuntimeConfigurationError("Set server=n in the domain's java-config debug-options so IntelliJ can listen for the server JVM.");
+            }
+            data.setDebugPort(configuration.getDebugPort());
+            data.setLocal(true);
+            if (data instanceof GenericDebuggerRunnerSettings generic) generic.setTransport(DebuggerSettings.SOCKET_TRANSPORT);
+        } catch (IOException | JDOMException e) {
+            throw new RuntimeConfigurationError(e.getMessage());
+        }
     }
 }

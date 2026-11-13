@@ -1,8 +1,13 @@
 package fish.payara.server.ultimate;
 
-import com.intellij.execution.configurations.JavaParameters;
+import com.intellij.debugger.impl.GenericDebuggerRunnerSettings;
+import com.intellij.debugger.settings.DebuggerSettings;
+import com.intellij.execution.process.ProcessAdapter;
+import com.intellij.execution.process.ProcessEvent;
+import com.intellij.javaee.appServers.run.localRun.CommandLineExecutableObject;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.executors.DefaultRunExecutor;
+import com.intellij.execution.RunManager;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
 import com.intellij.javaee.appServers.run.execution.J2EERunnableState;
 import com.intellij.javaee.appServers.run.execution.update.RedeployArtifactsUpdatingPolicy;
@@ -25,6 +30,7 @@ import com.intellij.openapi.projectRoots.JavaSdk;
 import com.intellij.openapi.projectRoots.ProjectJdkTable;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.Key;
 import com.intellij.packaging.artifacts.ArtifactType;
 import com.intellij.testFramework.junit5.TestApplication;
 import com.intellij.testFramework.junit5.fixture.TestFixture;
@@ -38,6 +44,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -63,7 +72,9 @@ class PayaraUltimateTest {
         Path config = Files.createDirectories(glassfish.resolve("domains/local/config"));
         Files.writeString(config.resolve("domain.xml"), """
                 <domain><servers><server name="server" config-ref="local-config"/></servers>
-                <configs><config name="local-config"><network-config><network-listeners>
+                <configs><config name="local-config">
+                <java-config debug-options="-agentlib:jdwp=transport=dt_socket,server=n,suspend=y,address=9010"/>
+                <network-config><network-listeners>
                   <network-listener name="admin-listener" port="5959"/>
                   <network-listener name="http-listener-1" port="8181"/>
                 </network-listeners></network-config></config></configs></domain>
@@ -148,19 +159,47 @@ class PayaraUltimateTest {
     }
 
     @Test
-    void buildsTheDomainJavaCommandAndLeavesAdditionalVmOptionsToIntellij() throws Exception {
-        configuration.getSettingsBean().COMMON_VM_ARGUMENTS = "-Dcustom.option=\"value with spaces\"";
-        JavaParameters parameters = new PayaraStartupPolicy().createCommandLine(configuration);
-        assertEquals(sdk, parameters.getJdk());
-        assertEquals("com.sun.enterprise.glassfish.bootstrap.ASMain", parameters.getMainClass());
-        assertNull(parameters.getJarPath());
-        assertEquals(sdk.getHomePath(), parameters.getEnv().get("AS_JAVA"));
-        assertTrue(parameters.getClassPath().getPathList().contains("/path with spaces/glassfish.jar"));
-        assertFalse(parameters.getVMParametersList().getList().stream().anyMatch(p -> p.startsWith("-Dcustom.option")));
-        assertTrue(parameters.getVMParametersList().getList().contains("-Ddomain.option=true"));
-        assertEquals(List.of("-verbose", "true"), parameters.getProgramParametersList().getList());
-        assertThrows(com.intellij.execution.ExecutionException.class,
-                () -> PayaraStartupPolicy.serverParameters(parameters, "Unexpected CLI output"));
+    void startsAndStopsThroughAsadminWithoutStartingTheDomainJvmInTheConsole() throws Exception {
+        var policy = new PayaraStartupPolicy();
+        var model = (PayaraServerModel) configuration.getServerModel();
+        Map<String, String> environment = new HashMap<>();
+        for (var variable : policy.getEnvironmentVariables(model)) environment.put(variable.NAME, variable.VALUE);
+        assertEquals(sdk.getHomePath(), environment.get("JAVA_HOME"));
+        assertEquals(sdk.getHomePath(), environment.get("AS_JAVA"));
+        for (boolean debug : List.of(false, true)) {
+            var script = (CommandLineExecutableObject) policy.getDefaultStartupScript(model, debug);
+            var arguments = List.of(script.getParameters());
+            assertTrue(arguments.getFirst().startsWith(sdk.getHomePath()));
+            assertTrue(arguments.contains("start-domain"));
+            assertTrue(arguments.contains("--debug=" + debug));
+            assertFalse(arguments.stream().anyMatch(p -> p.startsWith("--verbose") || p.startsWith("--dry-run") || p.contains("jdwp")));
+            assertTrue(((PayaraServerIntegration) configuration.getIntegration()).isStartupScriptTerminating(script));
+            assertTrue(runScript(script, environment).contains("Command start-domain executed successfully."));
+        }
+        var stop = (CommandLineExecutableObject) policy.getDefaultShutdownScript(model, false);
+        assertTrue(List.of(stop.getParameters()).contains("stop-domain"));
+        assertTrue(runScript(stop, environment).contains("Command stop-domain executed successfully."));
+        var calls = Files.readAllLines(temp.resolve("glassfish/bin/calls.txt"));
+        assertEquals(3, calls.size());
+        assertTrue(calls.getLast().contains("stop-domain\t--domaindir\t" + temp.resolve("glassfish/domains") + "\tlocal"));
+    }
+
+    @Test
+    void configuresTheDebuggerFromTheDomainWithoutDebuggingAsadmin() throws Exception {
+        var policy = new PayaraStartupPolicy();
+        var model = (PayaraServerModel) configuration.getServerModel();
+        var settings = new GenericDebuggerRunnerSettings();
+        settings.setTransport(DebuggerSettings.SHMEM_TRANSPORT);
+        policy.initSettings(model, settings);
+        policy.checkSettings(model, settings);
+        assertEquals("9010", settings.getDebugPort());
+        assertFalse(settings.isRemote());
+        assertEquals(DebuggerSettings.SOCKET_TRANSPORT, settings.getTransport());
+        var domain = temp.resolve("glassfish/domains/local/config/domain.xml");
+        Files.writeString(domain, Files.readString(domain).replace("server=n", "server=y"));
+        assertTrue(assertThrows(Exception.class, () -> policy.checkSettings(model, settings)).getMessage().contains("server=n"));
+        configuration.getSettingsBean().COMMON_VM_ARGUMENTS = "-Xmx1g";
+        assertTrue(assertThrows(Exception.class, model::checkConfiguration).getMessage().contains("domain.xml"));
     }
 
     @Test
@@ -204,10 +243,17 @@ class PayaraUltimateTest {
     void rejectsDuplicateDeploymentNamesAndInvalidDomains() throws Exception {
         deployment("api-1.ear", "same-name");
         deployment("api-2.ear", "same-name");
-        var error = assertThrows(Exception.class, () -> new PayaraStartupPolicy().createCommandLine(configuration));
+        var error = assertThrows(Exception.class, () -> configuration.getServerModel().checkConfiguration());
         assertTrue(error.getMessage().contains("Duplicate"), error.toString());
         ((PayaraServerModel) configuration.getServerModel()).DOMAIN = "../other";
-        assertTrue(assertThrows(Exception.class, () -> new PayaraStartupPolicy().createCommandLine(configuration)).getMessage().contains("domain name"));
+        assertTrue(assertThrows(Exception.class, () -> configuration.getServerModel().checkConfiguration()).getMessage().contains("domain name"));
+        ((PayaraServerModel) configuration.getServerModel()).DOMAIN = "local";
+        ApplicationManager.getApplication().invokeAndWait(() -> WriteAction.run(() -> {
+            var modificator = sdk.getSdkModificator();
+            modificator.setHomePath(temp.resolve("missing-jdk").toString());
+            modificator.commitChanges();
+        }));
+        assertTrue(assertThrows(Exception.class, () -> configuration.getServerModel().checkConfiguration()).getMessage().contains("Java SDK"));
     }
 
     @Test
@@ -219,10 +265,17 @@ class PayaraUltimateTest {
         assertFalse(types.contains("jar"));
         assertTrue(configuration.getDeploymentProvider().isResourcesReloadingSupported(configuration, ArtifactType.findById("exploded-war")));
         assertTrue(new RedeployArtifactsUpdatingPolicy().isAvailableForConfiguration(configuration));
+        var saved = RunManager.getInstance(project.get()).createConfiguration(configuration, configuration.getFactory());
         for (var executor : List.of(DefaultRunExecutor.getRunExecutorInstance(), DefaultDebugExecutor.getDebugExecutorInstance())) {
-            var environment = ExecutionEnvironmentBuilder.create(project.get(), executor, configuration).build();
+            var environment = ExecutionEnvironmentBuilder.create(executor, saved).build();
             assertTrue(environment.getRunner().canRun(executor.getId(), configuration));
+            configuration.checkRunnerSettings(environment.getRunner(), environment.getRunnerSettings(), environment.getConfigurationSettings());
             assertInstanceOf(J2EERunnableState.class, configuration.getState(executor, environment));
+            if (DefaultDebugExecutor.EXECUTOR_ID.equals(executor.getId())) {
+                var debugging = assertInstanceOf(GenericDebuggerRunnerSettings.class, environment.getRunnerSettings());
+                assertEquals("9010", debugging.getDebugPort());
+                assertFalse(debugging.isRemote());
+            }
         }
     }
 
@@ -232,6 +285,22 @@ class PayaraUltimateTest {
                 .getOrCreateModel(new ExternalFileDeploymentSource(archive.toFile()));
         deployment.setApplicationName(name);
         return deployment;
+    }
+
+    private static String runScript(CommandLineExecutableObject script, Map<String, String> environment) throws Exception {
+        var process = script.createProcessHandler(null, environment);
+        var output = new CopyOnWriteArrayList<String>();
+        process.addProcessListener(new ProcessAdapter() {
+            @Override public void onTextAvailable(ProcessEvent event, Key type) { output.add(event.getText()); }
+        });
+        process.startNotify();
+        try {
+            assertTrue(process.waitFor(10_000));
+            assertEquals(0, process.getExitCode());
+            return String.join("", output);
+        } finally {
+            if (!process.isProcessTerminated()) process.destroyProcess();
+        }
     }
 
     private static JavaeeAdminDeployCallback callback(AtomicReference<DeploymentStatus> state, List<Exception> errors) {

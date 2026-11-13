@@ -121,6 +121,7 @@ class ServerLocalConfigurationTest {
                 List.of("deploy", "--force=true", "--name", "stable-api", versioned.toString())), configuration.createDeploymentCommands());
         assertEquals("5959", configuration.getAdminPort());
         assertEquals("9010", configuration.getDebugPort());
+        assertTrue(configuration.isDebugServerListening());
         ApplicationManager.getApplication().invokeAndWait(() -> {
             var editor = new ServerArtifactsEditor(project.get());
             try {

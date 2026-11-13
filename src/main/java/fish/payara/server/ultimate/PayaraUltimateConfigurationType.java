@@ -18,7 +18,6 @@ package fish.payara.server.ultimate;
 
 import com.intellij.execution.configurations.ConfigurationFactory;
 import com.intellij.javaee.appServers.appServerIntegrations.AppServerIntegration;
-import com.intellij.javaee.appServers.run.configuration.JavaCommandLineStartupPolicy;
 import com.intellij.javaee.appServers.run.configuration.ServerModel;
 import com.intellij.javaee.appServers.run.localRun.ExecutableObjectStartupPolicy;
 import com.intellij.javaee.oss.server.JavaeeConfigurationType;
@@ -40,7 +39,5 @@ public final class PayaraUltimateConfigurationType extends JavaeeConfigurationTy
     @Override protected List<ConfigurationFactory> computeFactories() { return List.of(createLocalFactory()); }
     @Override protected ServerModel createLocalModel() { return new PayaraServerModel(); }
     @Override protected ServerModel createRemoteModel() { throw new UnsupportedOperationException("Only local Payara servers are supported."); }
-    @Override protected boolean isJavaStartupPolicy() { return true; }
-    @Override protected JavaCommandLineStartupPolicy createJavaStartupPolicy() { return new PayaraStartupPolicy(); }
-    @Override protected ExecutableObjectStartupPolicy createStartupPolicy() { return ExecutableObjectStartupPolicy.DEFAULT; }
+    @Override protected ExecutableObjectStartupPolicy createStartupPolicy() { return new PayaraStartupPolicy(); }
 }

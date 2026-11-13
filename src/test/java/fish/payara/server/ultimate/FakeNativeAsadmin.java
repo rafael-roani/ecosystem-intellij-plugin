@@ -19,10 +19,13 @@ public class FakeNativeAsadmin {
             if (Files.getFileStore(Path.of(arguments.get(password + 1))).supportsFileAttributeView("posix")
                     && Files.getPosixFilePermissions(Path.of(arguments.get(password + 1))).stream().anyMatch(p -> !p.name().startsWith("OWNER_"))) System.exit(9);
         }
-        if (arguments.contains("--dry-run=true")) {
-            System.out.println(Path.of(System.getProperty("java.home"), "bin", "java"));
-            System.out.println("-cp\n/path with spaces/glassfish.jar\n-Xmx128m\n-Ddomain.option=true");
-            System.out.println("com.sun.enterprise.glassfish.bootstrap.ASMain\n-read-stdin\ntrue\n-verbose\ntrue");
+        if (arguments.contains("start-domain")) {
+            System.out.println("Successfully started the domain : local");
+            System.out.println("Command start-domain executed successfully.");
+            return;
+        }
+        if (arguments.contains("stop-domain")) {
+            System.out.println("Command stop-domain executed successfully.");
             return;
         }
         Path state = Path.of("deployed.txt");
