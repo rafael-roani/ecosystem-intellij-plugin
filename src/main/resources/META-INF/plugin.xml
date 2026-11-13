@@ -30,16 +30,20 @@
     <depends>org.jetbrains.plugins.terminal</depends>
     <depends>com.intellij.modules.java</depends>
     <depends>com.intellij.modules.platform</depends>
+    <depends optional="true" config-file="payara-ultimate.xml">com.intellij.javaee.app.servers.integration</depends>
     <dependencies>
         <module name="intellij.platform.debugger"/>
         <module name="intellij.platform.externalSystem"/>
         <module name="intellij.terminal.frontend"/>
+        <module name="intellij.java.compiler"/>
+        <module name="intellij.java.compiler.impl"/>
     </dependencies>
     <resource-bundle>fish.payara.PayaraBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
         <configurationType implementation="fish.payara.micro.PayaraMicroConfigurationType"/>
         <configurationType implementation="fish.payara.server.PayaraServerConfigurationType"/>
+        <programRunner implementation="fish.payara.server.local.ServerLocalDebugRunner"/>
         <moduleBuilder builderClass="fish.payara.micro.project.PayaraMicroModuleBuilder" order="last" id="PAYARA_MICRO_MODULE_BUILDER"/>
         <moduleType implementationClass="fish.payara.micro.project.PayaraMicroModuleType" id="JAVA_MODULE"/>
         <configurationType implementation="fish.payara.qube.PayaraQubeConfigurationType"/>

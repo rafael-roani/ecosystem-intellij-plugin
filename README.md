@@ -2,6 +2,59 @@
 
 [![License](https://img.shields.io/badge/License-EPL%202.0-red.svg)](http://www.eclipse.org/legal/epl-2.0)
 
+### Payara Server with IntelliJ IDEA Ultimate
+
+Enable **Jakarta EE: Application Servers** and create a **Payara Server
+(Ultimate) > Local** run configuration. Under **Application server > Configure**,
+add a **Payara Server** installation. Select the server JRE and domain on the
+**Server** tab; Payara 5 can use Java 8 independently of the plugin's Java 25
+build toolchain. Administration credentials use IntelliJ's password storage;
+leaving the password empty uses the server default or a saved `asadmin login`.
+
+The native **Deployment** tab accepts project artifacts, external EAR/WAR files
+and exploded applications. Its optional **Application name** field keeps the
+same server deployment when the archive version changes. Use **Build Artifacts**
+in **Before launch** for project artifacts; external archives must already exist.
+The EAR/WAR descriptors continue to supply the application's context roots.
+
+**Run**, **Debug** and **Stop** use IntelliJ's application server lifecycle.
+The server and its deployments appear in **Services**, with deploy, redeploy,
+undeploy and status refresh actions. **Update Application** offers the native
+update policies: redeploy for archives, resource updates for project exploded
+artifacts and class HotSwap while debugging. Structural Java changes still
+require redeployment when the selected JVM cannot HotSwap them.
+JVM options entered in IntelliJ apply to the server JVM; the domain's startup
+settings are read without modifying `domain.xml`. Stop another running instance
+of the domain before launching it from the IDE.
+Domains with a custom master password must have that password saved by Payara;
+the default domain master password also works.
+
+This integration is loaded only when the Ultimate application server plugin is
+available. Existing **Payara Server > Local** and **Maven** profiles remain usable.
+
+### Local Payara Server
+
+Create a **Payara Server > Local** run configuration. On the **Server** tab,
+select the existing Payara installation, domain folder name and server JDK
+(for example, Java 8 for Payara 5). The plugin's Java 25 build toolchain does
+not change the server JDK.
+
+The separate **Artifacts** tab accepts multiple IntelliJ project artifacts,
+external EAR/WAR archives and exploded applications. Project artifacts are
+added to IntelliJ's build-before-launch task; external files must already be
+built. Deployments run in the listed order after the domain starts, using
+the context roots in the application descriptors. A failed deployment stops
+the remaining deployments and reports the error in the Run console.
+Use **Edit application name** to keep a deployment name when replacing a
+versioned archive; otherwise the archive filename supplies the name.
+
+Stop an independently running copy of the domain before launching this
+configuration. **Debug** uses the socket port in the domain's `java-config`
+settings. **Stop** terminates the server and any deployment command started
+by the run configuration. Protected administration endpoints use credentials
+previously saved by `asadmin login` for `localhost` and the domain's admin port.
+The existing Maven configuration remains available under **Payara Server > Maven**.
+
 ### Development
 
 The plugin targets IntelliJ IDEA 2026.3 (builds `263.7307.200` through `263.*`).

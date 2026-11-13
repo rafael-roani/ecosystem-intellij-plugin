@@ -28,9 +28,10 @@ dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty('platformVersion'))
         bundledPlugins('com.intellij.java', 'org.jetbrains.idea.maven',
-                'org.jetbrains.plugins.gradle', 'org.jetbrains.plugins.terminal')
+                'org.jetbrains.plugins.gradle', 'org.jetbrains.plugins.terminal',
+                'com.intellij.javaee.app.servers.integration')
         bundledModules('intellij.platform.debugger', 'intellij.platform.externalSystem',
-                'intellij.terminal.frontend')
+                'intellij.terminal.frontend', 'intellij.java.compiler', 'intellij.java.compiler.impl')
         testFramework org.jetbrains.intellij.platform.gradle.TestFrameworkType.JUnit5.INSTANCE
         testFramework org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform.INSTANCE
     }

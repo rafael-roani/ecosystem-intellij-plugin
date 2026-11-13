@@ -20,6 +20,7 @@ import com.intellij.execution.configurations.ConfigurationFactory;
 import com.intellij.execution.configurations.ConfigurationType;
 import static fish.payara.PayaraConstants.PAYARA_ICON;
 import fish.payara.server.maven.ServerMavenConfigurationFactory;
+import fish.payara.server.local.ServerLocalConfigurationFactory;
 import org.jetbrains.annotations.NotNull;
 import javax.swing.*;
 
@@ -50,7 +51,8 @@ public class PayaraServerConfigurationType implements ConfigurationType {
     @Override
     public ConfigurationFactory[] getConfigurationFactories() {
         return new ConfigurationFactory[]{
-            new ServerMavenConfigurationFactory(this)
+            new ServerMavenConfigurationFactory(this),
+            new ServerLocalConfigurationFactory(this)
         };
     }
 }
