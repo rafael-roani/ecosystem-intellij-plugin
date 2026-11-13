@@ -18,8 +18,14 @@ in **Before launch** for project artifacts; external archives must already exist
 The EAR/WAR descriptors continue to supply the application's context roots.
 
 **Run** and **Debug** start the domain through `asadmin start-domain`; **Stop**
-runs `asadmin stop-domain`. IntelliJ continues monitoring the domain after the
-startup command exits. For **Debug**, configure `transport=dt_socket,server=n`
+undeploys every application listed by `asadmin list-applications`, including
+ones deployed outside IntelliJ, and then runs `asadmin stop-domain`. The **Server**
+console lists the undeployed applications. If an undeploy fails, the remaining
+applications are still attempted and the error is reported before stopping the
+domain. If the domain is not reachable, the undeploy step is skipped and the
+domain is still stopped. Applications that could not be removed remain deployed
+for the next start. IntelliJ continues monitoring the domain after the startup
+command exits. For **Debug**, configure `transport=dt_socket,server=n`
 and a local debug address in the domain's `java-config` debug options; IntelliJ
 listens on that port while the server JVM connects to it.
 The server and its deployments appear in **Services**, with deploy, redeploy,

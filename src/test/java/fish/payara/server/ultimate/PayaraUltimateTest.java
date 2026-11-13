@@ -8,7 +8,12 @@ import com.intellij.javaee.appServers.run.localRun.CommandLineExecutableObject;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.RunManager;
+import com.intellij.execution.configurations.RunProfile;
+import com.intellij.execution.configurations.RunnerSettings;
+import com.intellij.execution.impl.ConfigurationSettingsEditorWrapper;
+import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
+import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.javaee.appServers.run.execution.J2EERunnableState;
 import com.intellij.javaee.appServers.run.execution.update.RedeployArtifactsUpdatingPolicy;
 import com.intellij.javaee.appServers.appServerIntegrations.AppServerIntegration;
@@ -159,6 +164,37 @@ class PayaraUltimateTest {
     }
 
     @Test
+    void editsExistingAndNewConfigurationsWithANonJvmDebuggerRunner() {
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            var type = new PayaraUltimateConfigurationType();
+            var template = (CommonStrategy) type.getLocalFactory().createTemplateConfiguration(project.get());
+            template.setApplicationServer(null);
+            ProgramRunner<RunnerSettings> thirdPartyRunner = new ProgramRunner<>() {
+                @Override public String getRunnerId() { return "ThirdPartyDebugger"; }
+                @Override public boolean canRun(String executorId, RunProfile profile) { return true; }
+                @Override public void execute(ExecutionEnvironment environment) { fail("Editing must not launch a process"); }
+            };
+            for (var target : List.of(configuration, template)) {
+                var saved = RunManager.getInstance(project.get()).createConfiguration(target, target.getFactory());
+                var editor = ConfigurationSettingsEditorWrapper.createWrapper(saved);
+                try {
+                    assertNotNull(editor.getComponent());
+                    editor.resetFrom(saved);
+                    if (target == configuration) assertDoesNotThrow(() -> editor.applyTo(saved), "Existing configuration");
+                } finally { Disposer.dispose(editor); }
+                var runnerEditor = target.getRunnerSettingsEditor(thirdPartyRunner);
+                try {
+                    assertNotNull(runnerEditor.getComponent());
+                    var settings = saved.getConfigurationSettings(thirdPartyRunner);
+                    runnerEditor.resetFrom(settings);
+                    assertDoesNotThrow(() -> runnerEditor.applyTo(settings));
+                } finally { Disposer.dispose(runnerEditor); }
+            }
+            assertFalse(Files.exists(temp.resolve("glassfish/bin/calls.txt")));
+        });
+    }
+
+    @Test
     void startsAndStopsThroughAsadminWithoutStartingTheDomainJvmInTheConsole() throws Exception {
         var policy = new PayaraStartupPolicy();
         var model = (PayaraServerModel) configuration.getServerModel();
@@ -176,12 +212,57 @@ class PayaraUltimateTest {
             assertTrue(((PayaraServerIntegration) configuration.getIntegration()).isStartupScriptTerminating(script));
             assertTrue(runScript(script, environment).contains("Command start-domain executed successfully."));
         }
+        Files.write(temp.resolve("glassfish/bin/deployed.txt"), List.of("ocean-ear-2026-11-10", "ocean-api-ear-2026-11-13"));
         var stop = (CommandLineExecutableObject) policy.getDefaultShutdownScript(model, false);
         assertTrue(List.of(stop.getParameters()).contains("stop-domain"));
-        assertTrue(runScript(stop, environment).contains("Command stop-domain executed successfully."));
+        String stopOutput = runScript(stop, environment);
+        assertTrue(stopOutput.contains("Undeployed before stop: ocean-ear-2026-11-10, ocean-api-ear-2026-11-13"), stopOutput);
+        assertTrue(stopOutput.contains("Command stop-domain executed successfully."));
+        assertEquals(List.of(), Files.readAllLines(temp.resolve("glassfish/bin/deployed.txt")));
         var calls = Files.readAllLines(temp.resolve("glassfish/bin/calls.txt"));
-        assertEquals(3, calls.size());
+        assertEquals(6, calls.size());
+        assertTrue(calls.get(2).contains("--port\t5959") && calls.get(2).endsWith("list-applications"), calls.get(2));
+        assertTrue(calls.get(3).endsWith("undeploy\tocean-ear-2026-11-10"));
+        assertTrue(calls.get(4).endsWith("undeploy\tocean-api-ear-2026-11-13"));
         assertTrue(calls.getLast().contains("stop-domain\t--domaindir\t" + temp.resolve("glassfish/domains") + "\tlocal"));
+    }
+
+    @Test
+    void readsApplicationNamesFromTerseListOutput() {
+        assertEquals(List.of("ocean-ear-2026-11-13", "ocean api"),
+                PayaraAdmin.applicationNames("ocean-ear-2026-11-13  <ear, ejb, web>\nocean api  <ear, web>\n"));
+        assertEquals(List.of(), PayaraAdmin.applicationNames("Nothing to list.\n"));
+    }
+
+    @Test
+    void continuesUndeployingAfterAFailureAndStillStopsTheDomain() throws Exception {
+        Path directory = temp.resolve("glassfish/bin");
+        Files.write(directory.resolve("deployed.txt"), List.of("cannot-undeploy", "ocean api", "ocean-job"));
+        var model = (PayaraServerModel) configuration.getServerModel();
+        var stop = (CommandLineExecutableObject) new PayaraStartupPolicy().getDefaultShutdownScript(model, false);
+        String output = runScript(stop, Map.of());
+        assertTrue(output.contains("Undeploy before stop failed: cannot-undeploy"), output);
+        assertTrue(output.contains("Command stop-domain executed successfully."), output);
+        assertEquals(List.of("cannot-undeploy"), Files.readAllLines(directory.resolve("deployed.txt")));
+        var calls = Files.readAllLines(directory.resolve("calls.txt"));
+        assertEquals(5, calls.size());
+        assertTrue(calls.get(2).endsWith("undeploy\tocean api"), calls.toString());
+        assertTrue(calls.get(3).endsWith("undeploy\tocean-job"), calls.toString());
+        assertTrue(calls.getLast().contains("stop-domain"), calls.toString());
+    }
+
+    @Test
+    void stopsTheDomainEvenIfListingApplicationsFails() throws Exception {
+        Path directory = temp.resolve("glassfish/bin");
+        Files.createFile(directory.resolve("fail-list"));
+        var model = (PayaraServerModel) configuration.getServerModel();
+        var stop = (CommandLineExecutableObject) new PayaraStartupPolicy().getDefaultShutdownScript(model, false);
+        String output = runScript(stop, Map.of());
+        assertTrue(output.contains("Admin endpoint unavailable"), output);
+        assertTrue(output.contains("Command stop-domain executed successfully."), output);
+        var calls = Files.readAllLines(directory.resolve("calls.txt"));
+        assertEquals(2, calls.size());
+        assertTrue(calls.getLast().contains("stop-domain"), calls.toString());
     }
 
     @Test

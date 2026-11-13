@@ -31,6 +31,10 @@ public class FakeNativeAsadmin {
         Path state = Path.of("deployed.txt");
         var deployed = new ArrayList<>(Files.exists(state) ? Files.readAllLines(state) : java.util.List.<String>of());
         if (arguments.contains("list-applications")) {
+            if (Files.exists(Path.of("fail-list"))) {
+                System.err.println("Admin endpoint unavailable");
+                System.exit(7);
+            }
             for (String name : deployed) System.out.println(name + "  <ear, web>");
         } else if (arguments.contains("deploy")) {
             String name = arguments.get(arguments.indexOf("--name") + 1);
@@ -41,6 +45,10 @@ public class FakeNativeAsadmin {
             if (!deployed.contains(name)) deployed.add(name);
             Files.write(state, deployed);
         } else if (arguments.contains("undeploy")) {
+            if (arguments.get(arguments.indexOf("undeploy") + 1).equals("cannot-undeploy")) {
+                System.err.println("Undeployment rejected");
+                System.exit(7);
+            }
             deployed.remove(arguments.get(arguments.indexOf("undeploy") + 1));
             Files.write(state, deployed);
         }

@@ -21,18 +21,28 @@ import com.intellij.execution.configurations.RuntimeConfigurationError;
 import com.intellij.execution.configurations.RuntimeConfigurationException;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.process.OSProcessHandler;
+import com.intellij.execution.process.ProcessEvent;
+import com.intellij.execution.process.ProcessListener;
+import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.execution.util.EnvironmentVariable;
 import com.intellij.debugger.impl.GenericDebuggerRunnerSettings;
 import com.intellij.debugger.settings.DebuggerSettings;
+import com.intellij.javaee.appServers.run.configuration.CommonModel;
+import com.intellij.javaee.appServers.run.localRun.EnvironmentHelper;
 import com.intellij.javaee.appServers.run.localRun.ExecutableObject;
 import com.intellij.javaee.appServers.run.localRun.ColoredCommandLineExecutableObject;
 import com.intellij.javaee.oss.server.JavaeeParameters;
 import com.intellij.javaee.oss.server.JavaeeStartupPolicy;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.projectRoots.JavaSdkType;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import org.jdom.JDOMException;
 
 final class PayaraStartupPolicy extends JavaeeStartupPolicy<PayaraServerModel> {
@@ -63,7 +73,7 @@ final class PayaraStartupPolicy extends JavaeeStartupPolicy<PayaraServerModel> {
         if (model.getCommonModel().getApplicationServer() == null) return null;
         var parameters = new JavaeeParameters();
         getStartupParameters(parameters, model, debug);
-        return executable(model, parameters);
+        return executable(model, parameters, ignored -> "");
     }
 
     @Override
@@ -71,14 +81,57 @@ final class PayaraStartupPolicy extends JavaeeStartupPolicy<PayaraServerModel> {
         if (model.getCommonModel().getApplicationServer() == null) return null;
         var parameters = new JavaeeParameters();
         getShutdownParameters(parameters, model, debug);
-        return executable(model, parameters);
+        return executable(model, parameters, PayaraStartupPolicy::undeployAllBeforeStop);
     }
 
-    private static ExecutableObject executable(PayaraServerModel model, JavaeeParameters parameters) {
+    private static ExecutableObject executable(PayaraServerModel model, JavaeeParameters parameters,
+                                               Function<PayaraServerModel, String> beforeStart) {
         String directory = model.localConfiguration().getGlassfishHome().resolve("bin").toString();
         return new ColoredCommandLineExecutableObject(parameters.get(), null) {
             @Override public OSProcessHandler createProcessHandler(String workingDirectory, Map<String, String> environment) throws ExecutionException {
-                return super.createProcessHandler(workingDirectory == null ? directory : workingDirectory, environment);
+                String message = runOffEdt(() -> beforeStart.apply(model));
+                OSProcessHandler handler = super.createProcessHandler(workingDirectory == null ? directory : workingDirectory, environment);
+                if (!message.isEmpty()) {
+                    handler.addProcessListener(new ProcessListener() {
+                        @Override public void startNotified(ProcessEvent event) {
+                            handler.notifyTextAvailable(message, ProcessOutputTypes.SYSTEM);
+                        }
+                    });
+                }
+                return handler;
+            }
+        };
+    }
+
+    private static String runOffEdt(Supplier<String> task) {
+        if (!ApplicationManager.getApplication().isDispatchThread()) return task.get();
+        var result = new AtomicReference<>("");
+        ProgressManager.getInstance().runProcessWithProgressSynchronously(
+                () -> result.set(task.get()), "Undeploying Payara applications", false, null);
+        return result.get();
+    }
+
+    private static String undeployAllBeforeStop(PayaraServerModel model) {
+        var admin = new PayaraAdmin(model, null);
+        admin.start("localhost", model.getServerPort(), model.USERNAME, model.getPassword(), null);
+        try {
+            var names = admin.undeployAll();
+            return names.isEmpty() ? "" : "Undeployed before stop: " + String.join(", ", names) + "\n";
+        } catch (ExecutionException e) {
+            return "Undeploy before stop failed: " + e.getMessage() + "\n";
+        } finally {
+            admin.shutdown();
+        }
+    }
+
+    @Override
+    public EnvironmentHelper getEnvironmentHelper() {
+        return new EnvironmentHelper() {
+            // asadmin reads domain.xml; calculating JAVA_OPTS assumes every runner can patch a JVM.
+            @Override public boolean isVmVariableVisible() { return false; }
+            @Override public String getDefaultJavaVmEnvVariableName(CommonModel model) { return JAVA_OPTS; }
+            @Override public List<EnvironmentVariable> getAdditionalEnvironmentVariables(CommonModel model) {
+                return getEnvironmentVariables((PayaraServerModel) model.getServerModel());
             }
         };
     }

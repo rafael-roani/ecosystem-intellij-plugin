@@ -33,12 +33,15 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 final class PayaraAdmin implements JavaeeAdmin {
+    private static final Pattern APPLICATION = Pattern.compile("(?m)^([^\\r\\n]+?)\\h+<");
+
     private final PayaraServerModel model;
     private final JavaeeServerInstance instance;
     private final AtomicReference<CapturingProcessHandler> current = new AtomicReference<>();
@@ -124,6 +127,21 @@ final class PayaraAdmin implements JavaeeAdmin {
         } catch (ExecutionException | com.intellij.execution.configurations.RuntimeConfigurationError e) {
             callback.setDeploymentStatus(deployment, DeploymentStatus.UNKNOWN, e);
         }
+    }
+
+    List<String> undeployAll() throws ExecutionException {
+        var names = applicationNames(execute(List.of("list-applications"), 30_000).getStdout());
+        var failures = new ArrayList<String>();
+        for (String name : names) {
+            try { execute(List.of("undeploy", name), 600_000); }
+            catch (ExecutionException e) { failures.add(name + ": " + e.getMessage()); }
+        }
+        if (!failures.isEmpty()) throw new ExecutionException(String.join("\n", failures));
+        return names;
+    }
+
+    static List<String> applicationNames(String terseListOutput) {
+        return APPLICATION.matcher(terseListOutput).results().map(match -> match.group(1)).toList();
     }
 
     private static PayaraDeploymentModel payaraDeployment(DeploymentModel model) throws ExecutionException {
